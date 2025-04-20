@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>献立アプリ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    body { margin: 0; padding-bottom: 60px; font-family: sans-serif; }
+    .content { padding: 20px; }
+
+    .footer-nav {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 60px;
+      background-color: #fff; border-top: 1px solid #ccc;
+      display: flex; justify-content: space-around; align-items: center;
+      box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
+    }
+
+    .footer-nav a {
+      text-decoration: none; color: #777; font-size: 11px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    .footer-nav a.active { color: #007bff; }
+    .footer-nav a i { font-size: 18px; margin-bottom: 3px; }
+
+    select, button { padding: 6px; margin: 4px 0; }
+
+    .accordion-section {
+      margin-bottom: 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .accordion-header {
+      background-color: #f0f0f0;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 16px;
+      color: #007bff;
+    }
+
+    .accordion-content {
+      display: none;
+      padding: 10px 14px;
+      background-color: #fafafa;
+    }
+
+    .accordion-content.open {
+      display: block;
+    }
+
+    .recipe-card {
+      background: #fff;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    .recipe-title {
+      font-size: 15px;
+      font-weight: bold;
+      color: #333;
+      margin: 0;
+    }
+
+    .recipe-link {
+      text-decoration: none;
+      color: inherit;
+    }
+  </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+  <div class="content" id="main-content">
+    <h1>読み込み中...</h1>
+  </div>
+
+  <nav class="footer-nav">
+    <a href="#recipes" class="active"><i class="fas fa-utensils"></i>レシピ一覧</a>
+    <a href="#this-week"><i class="fas fa-book-open"></i>今週のメニュー</a>
+    <a href="#next-week"><i class="fas fa-calendar-minus"></i>来週のメニュー</a>
+    <a href="#shopping-list"><i class="fas fa-cart-arrow-down"></i>買うものリスト</a>
+    <a href="#seasonings"><i class="fas fa-bottle-droplet"></i>調味料</a>
+  </nav>
+
+  <script>
+    const contentMap = {
+      "recipes": `<h1>レシピ一覧</h1><div id="recipe-list">読み込み中...</div>`,
+      "this-week": generateMenuTemplate("this-week"),
+      "next-week": generateMenuTemplate("next-week"),
+      "shopping-list": `<h1>買うものリスト</h1><div id="shopping-list-container">読み込み中...</div>`,
+      "seasonings": `
+        <h1>調味料</h1>
+        <div id="seasoning-selects">読み込み中...</div>
+        <button onclick="saveSeasoningsLocally()">保存する</button>
+        <button onclick="loadSavedSeasonings()">読み込む</button>
+      `
+    };
+
+    const links = document.querySelectorAll('.footer-nav a');
+    const content = document.getElementById('main-content');
+    let recipeList = [];
+
+    function generateMenuTemplate(week) {
+      const days = ["月", "火", "水", "木", "金", "土（昼）", "土（夜）", "日（昼）", "日（夜）"];
+      return `
+        <h1>${week === "this-week" ? "今週" : "来週"}のメニュー</h1>
+        ${days.map(day => `
+          <div>
+            <label>${day}：</label>
+            <select class="menu-select" data-day="${day}">
+              <option value="">選択してください</option>
+            </select>
+          </div>`).join('')}
+        <button onclick="saveMenuLocally('${week}')">保存する</button>
+        ${week === 'this-week' ? '<button onclick="copyMenuFromNextWeek()">来週のメニューをコピー</button>' : ''}
+      `;
+    }
+
+    function loadPage(page) {
+      content.innerHTML = contentMap[page] || '<h1>ページが見つかりません</h1>';
+      links.forEach(link => link.classList.remove('active'));
+      document.querySelector(`.footer-nav a[href="#${page}"]`)?.classList.add('active');
+
+      if (page === 'recipes') {
+        fetchRecipes();
+      } else if (page === 'this-week' || page === 'next-week') {
+        populateSelectOptions();
+        loadSavedMenu(page);
+      } else if (page === 'shopping-list') {
+        fetchShoppingList();
+      } else if (page === 'seasonings') {
+        fetchSeasonings();
+        loadSavedSeasonings();
+      }
+    }
+
+    async function fetchRecipes() {
+      try {
+        const response = await fetch("https://script.google.com/macros/s/AKfycbxFxlzvUV3N1TwQzUeJnHNLO-JIW8nBFy-rRAguO-3SGUWAUZK0u3ueAbSZ9k3pHcNK/exec");
+        recipeList = await response.json();
+
+        const grouped = {};
+        recipeList.forEach(r => {
+          const category = r.カテゴリ || "未分類";
+          if (!grouped[category]) grouped[category] = [];
+          grouped[category].push(r);
+        });
+
+        const html = Object.entries(grouped).map(([category, recipes]) => {
+          const cards = recipes.map(r =>
+            `<div class="recipe-card">
+              <a href="${r.URL}" target="_blank" class="recipe-link">
+                <p class="recipe-title">${r.レシピ名}</p>
+              </a>
+            </div>`
+          ).join('');
+          return `
+            <div class="accordion-section">
+              <div class="accordion-header" onclick="toggleAccordion(this)">${category}</div>
+              <div class="accordion-content">${cards}</div>
+            </div>
+          `;
+        }).join('');
+
+        document.getElementById('recipe-list').innerHTML = html || 'レシピが見つかりませんでした。';
+      } catch (e) {
+        document.getElementById('recipe-list').innerHTML = 'レシピの読み込みに失敗しました。';
+        console.error(e);
+      }
+    }
+
+    function toggleAccordion(header) {
+      const content = header.nextElementSibling;
+      content.classList.toggle("open");
+    }
+
+    function populateSelectOptions() {
+      const selects = document.querySelectorAll('.menu-select');
+      selects.forEach(select => {
+        select.innerHTML = `<option value="">選択してください</option>`;
+        recipeList.forEach(recipe => {
+          const option = document.createElement('option');
+          option.value = recipe.レシピ名;
+          option.textContent = recipe.レシピ名;
+          select.appendChild(option);
+        });
+      });
+    }
+
+    function saveMenuLocally(week) {
+      const selects = document.querySelectorAll('.menu-select');
+      const data = Array.from(selects).map(select => ({
+        曜日: select.getAttribute('data-day'),
+        レシピ名: select.value
+      }));
+      localStorage.setItem(`${week}-menu`, JSON.stringify(data));
+      alert("保存しました（ローカル）！");
+    }
+
+    function loadSavedMenu(week) {
+      const saved = localStorage.getItem(`${week}-menu`);
+      if (saved) {
+        const data = JSON.parse(saved);
+        data.forEach(({ 曜日, レシピ名 }) => {
+          const select = document.querySelector(`.menu-select[data-day="${曜日}"]`);
+          if (select) select.value = レシピ名;
+        });
+      }
+    }
+
+    function copyMenuFromNextWeek() {
+      const saved = localStorage.getItem("next-week-menu");
+      if (saved) {
+        localStorage.setItem("this-week-menu", saved);
+        alert("来週のメニューをコピーしました！");
+        loadPage("this-week");
+      } else {
+        alert("来週のメニューが保存されていません。");
+      }
+    }
+
+    async function fetchShoppingList() {
+      const container = document.getElementById('shopping-list-container');
+      container.innerHTML = "読み込み中...";
+      const savedMenu = localStorage.getItem("next-week-menu");
+      if (!savedMenu) {
+        container.innerHTML = "来週のメニューが設定されていません。";
+        return;
+      }
+
+      const selectedRecipes = JSON.parse(savedMenu)
+        .map(entry => entry.レシピ名)
+        .filter(name => name);
+
+      try {
+        const response = await fetch("https://script.google.com/macros/s/AKfycbz7EofOGYOnH4Rdrllif7NnMmvomBeHsvF1uu02hMMkrPo3ZPela-Vz7wxAYhKj1NfEYw/exec");
+        const items = await response.json();
+        const filteredItems = items.filter(item => selectedRecipes.includes(item.メニュー));
+        if (!filteredItems.length) {
+          container.innerHTML = "来週のメニューに基づく買うものはありません。";
+          return;
+        }
+
+        const foodMap = {};
+        filteredItems.forEach(item => {
+          const food = item.食品;
+          const menu = item.メニュー;
+          const amountRaw = item.購入量 || "";
+          const match = amountRaw.match(/^([\d.]+)\s*(\D*)$/);
+          if (!match) return;
+          const num = parseFloat(match[1]);
+          const unit = match[2].trim() || "";
+          if (!foodMap[food]) {
+            foodMap[food] = { units: {}, menus: new Set() };
+          }
+          if (!foodMap[food].units[unit]) {
+            foodMap[food].units[unit] = 0;
+          }
+          foodMap[food].units[unit] += num;
+          foodMap[food].menus.add(menu);
+        });
+
+        container.innerHTML = Object.entries(foodMap).map(([food, info]) => {
+          const menus = Array.from(info.menus).join("、");
+          const unitStrings = Object.entries(info.units).map(
+            ([unit, total]) => `${total}${unit}`
+          ).join(", ");
+          return `
+            <label style="display:block;margin-bottom:8px;">
+              <input type="checkbox" />
+              <span onclick="alert('使うメニュー：${menus}')" style="cursor:pointer;text-decoration:underline;color:#007bff;">
+                ${food}
+              </span> - ${unitStrings}
+            </label>
+          `;
+        }).join('');
+
+      } catch (error) {
+        console.error("買うものリストの取得に失敗：", error);
+        container.innerHTML = "買うものリストの読み込みに失敗しました。";
+      }
+    }
+
+    async function fetchSeasonings() {
+      const container = document.getElementById("seasoning-selects");
+      container.innerHTML = "読み込み中...";
+      try {
+        const response = await fetch("https://script.google.com/macros/s/AKfycbzTpSHwfY75wQL-cor_60wbKrRo40ucCXuuOETjDh8j6-CvY6fb1Ci_k34XmqRdSLuW/exec");
+        const data = await response.json();
+        if (!Array.isArray(data)) throw new Error("形式が正しくありません");
+
+        let html = "";
+        for (let i = 0; i < 7; i++) {
+          html += `
+            <div>
+              <label>調味料${i + 1}：</label>
+              <select class="seasoning-select" data-index="${i}">
+                <option value="">選択してください</option>
+                ${data.map(name => `<option value="${name}">${name}</option>`).join('')}
+              </select>
+            </div>
+          `;
+        }
+        container.innerHTML = html;
+        loadSavedSeasonings();
+      } catch (error) {
+        console.error("調味料の取得に失敗：", error);
+        container.innerHTML = "調味料の読み込みに失敗しました。";
+      }
+    }
+
+    function saveSeasoningsLocally() {
+      const selects = document.querySelectorAll('.seasoning-select');
+      const values = Array.from(selects).map(select => select.value);
+      localStorage.setItem("seasonings", JSON.stringify(values));
+      alert("調味料を保存しました！");
+    }
+
+    function loadSavedSeasonings() {
+      const saved = localStorage.getItem("seasonings");
+      if (saved) {
+        const values = JSON.parse(saved);
+        const selects = document.querySelectorAll('.seasoning-select');
+        values.forEach((value, index) => {
+          if (selects[index]) selects[index].value = value;
+        });
+      }
+    }
+
+    window.addEventListener('load', () => {
+      const page = location.hash.replace('#', '') || 'recipes';
+      loadPage(page);
+    });
+
+    window.addEventListener('hashchange', () => {
+      const page = location.hash.replace('#', '') || 'recipes';
+      loadPage(page);
+    });
+  </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("sw.js")
+        .then((reg) => console.log("SW登録成功:", reg))
+        .catch((err) => console.log("SW登録失敗:", err));
+    }
+  </script>
+</body>
+</html>
